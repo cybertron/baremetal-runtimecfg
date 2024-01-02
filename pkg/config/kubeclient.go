@@ -60,17 +60,24 @@ func NewKubeClient(apiserverURL, kubeconfigPath string, stopCh <-chan struct{}) 
 
 // Start starts a KubeClient
 func (c *KubeClient) Start() {
+	log.Error("Taking lock")
 	c.Lock()
+	log.Error("Got lock")
 	if c.factory == nil {
 		c.factory = informers.NewSharedInformerFactory(c, 0)
 		c.nodeInformer = c.factory.Core().V1().Nodes()
 	}
+	log.Error("Unlocking")
 	c.Unlock()
+	log.Error("Unlocked")
 
+	log.Error("Starting factory")
 	c.factory.Start(c.stopCh)
+	log.Error("Waiting for cache")
 	if ok := cache.WaitForCacheSync(c.stopCh, c.nodeInformer.Informer().HasSynced); !ok {
 		log.Warn("Failed to wait for node cache to sync")
 	}
+	log.Error("Done")
 }
 
 // ListNodes will return a list of all nodes in the cluster

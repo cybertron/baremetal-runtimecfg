@@ -1,6 +1,7 @@
 package monitor
 
 import (
+	"crypto/tls"
 	"fmt"
 	"io/ioutil"
 	"net"
@@ -61,9 +62,11 @@ func getActualMode(cfgPath string) (error, bool) {
 func updateUnicastConfig(kubeClient, localKubeClient *config.KubeClient, newConfig *config.Node) error {
 	var err error
 
+	log.Error("Starting enableUnicast")
 	if !newConfig.EnableUnicast {
 		return err
 	}
+	log.Error("Enabled")
 	newConfig.IngressConfig, err = config.GetIngressConfig(kubeClient, []string{newConfig.Cluster.APIVIP, newConfig.Cluster.IngressVIP})
 	if err != nil {
 		log.Warnf("Could not retrieve ingress config: %v", err)
@@ -162,8 +165,12 @@ func handleBootstrapStopKeepalived(kubeClient *config.KubeClient, bootstrapStopK
 		time.Sleep(3 * time.Second)
 	}
 
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	client := &http.Client{Transport: tr}
 	for {
-		if _, err := config.GetIngressConfig(kubeClient, []string{}); err != nil {
+		if _, err := client.Get("https://localhost:6443/readyz"); err != nil {
 			// We have started to talk to Ironic through the API VIP as well,
 			// so if Ironic is still up then we need to keep the VIP, even if
 			// the apiserver has gone down.
@@ -312,10 +319,12 @@ func KeepalivedWatch(kubeconfigPath, clusterConfigPath, templatePath, cfgPath st
 
 	kubeClient, err := config.NewKubeClient("", kubeconfigPath, done)
 	if err != nil {
+		log.Error(err)
 		return err
 	}
 	localKubeClient, err := config.NewKubeClient(config.LocalhostKubeApiServerUrl, kubeconfigPath, done)
 	if err != nil {
+		log.Error(err)
 		return err
 	}
 
@@ -335,6 +344,7 @@ func KeepalivedWatch(kubeconfigPath, clusterConfigPath, templatePath, cfgPath st
 	}
 	defer conn.Close()
 	for {
+		log.Error("Start of loop")
 		select {
 		case <-done:
 			return nil
@@ -424,6 +434,7 @@ func KeepalivedWatch(kubeconfigPath, clusterConfigPath, templatePath, cfgPath st
 			// NOTE(bnemec): We are now doing this first so it doesn't get skipped
 			// if there is a problem updating the peer list below, which can result
 			// in the VIP remaining on a node without API connectivity.
+			log.Error("Start of default")
 			ruleExists, err := checkHAProxyFirewallRules(apiVips[0].String(), apiPort, lbPort)
 			if err != nil {
 				log.Error("Failed to check for haproxy firewall rule")
@@ -446,10 +457,13 @@ func KeepalivedWatch(kubeconfigPath, clusterConfigPath, templatePath, cfgPath st
 					}
 				}
 			}
+			log.Error("Before newConfig")
 			newConfig, err := config.GetConfig(kubeconfigPath, clusterConfigPath, "/etc/resolv.conf", apiVips, ingressVips, 0, 0, 0)
 			if err != nil {
+				log.Error(err)
 				return err
 			}
+			log.Error("After newConfig")
 
 			//In upgrade flow, we should first continue with the same mode (unicast or multicast) as currently configured in keepalived.conf file
 			err, curEnableUnicast := getActualMode(cfgPath)
@@ -467,15 +481,20 @@ func KeepalivedWatch(kubeconfigPath, clusterConfigPath, templatePath, cfgPath st
 			for i, _ := range *newConfig.Configs {
 				(*newConfig.Configs)[i].EnableUnicast = newConfig.EnableUnicast
 			}
+			log.Error("Before updateUnicast")
 			err = updateUnicastConfig(kubeClient, localKubeClient, &newConfig)
 			if err != nil {
 				// We don't want to render a new config with an incomplete
 				// unicast peer list
+				log.Error("Failed to update unicast config")
+				log.Error(err)
 				time.Sleep(interval)
 				continue
 			}
+			log.Error("After updateUnicast")
 			curConfig = &newConfig
 			if doesConfigChanged(curConfig, appliedConfig) {
+				log.Error("Config changed")
 				if prevConfig == nil || cmp.Equal(*prevConfig, *curConfig) {
 					configChangeCtr++
 				} else {
@@ -512,10 +531,12 @@ func KeepalivedWatch(kubeconfigPath, clusterConfigPath, templatePath, cfgPath st
 					appliedConfig = curConfig
 				}
 			} else {
+				log.Error("No change")
 				configChangeCtr = 0
 			}
 			prevConfig = &newConfig
 
+			log.Error("Sleeping")
 			time.Sleep(interval)
 		}
 	}

@@ -235,10 +235,13 @@ func GetIngressConfig(kubeClient *KubeClient, vips []string) (IngressConfig, err
 	var machineNetwork string
 	var ingressConfig IngressConfig
 
+	log.Error("Before listNodes")
 	nodes, err := kubeClient.ListNodes("")
 	if err != nil {
+		log.Error(err)
 		return ingressConfig, err
 	}
+	log.Error("After listNodes")
 
 	if len(vips) == 0 {
 		// This is not necessarily an error path because in handleBootstrapStopKeepalived we do
