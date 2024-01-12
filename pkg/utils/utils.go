@@ -85,6 +85,21 @@ func IsKubernetesHealthy(port uint16) (bool, error) {
 	return string(body) == "ok", nil
 }
 
+func IsMCSHealthy() (bool, error) {
+	transport := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	client := &http.Client{Transport: transport}
+	resp, err := client.Get("https://localhost:9443/readyz")
+	if err != nil {
+		return false, err
+	}
+	defer client.CloseIdleConnections()
+	defer resp.Body.Close()
+
+	return resp.StatusCode == 200, nil
+}
+
 func AlarmStabilization(cur_alrm bool, cur_defect bool, consecutive_ctr uint8, on_threshold uint8, off_threshold uint8) (bool, uint8) {
 	var new_alrm bool = cur_alrm
 	var threshold uint8

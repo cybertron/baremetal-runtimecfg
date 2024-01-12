@@ -32,6 +32,7 @@ func Monitor(kubeconfigPath, clusterName, clusterDomain, templatePath, cfgPath s
 	var oldK8sHealthSts bool
 	var k8sHealthChangeCtr uint8 = 0
 	var configChangeCtr uint8 = 0
+	var oldMCSHealth bool = false
 
 	signals := make(chan os.Signal, 1)
 	done := make(chan bool, 1)
@@ -55,6 +56,7 @@ func Monitor(kubeconfigPath, clusterName, clusterDomain, templatePath, cfgPath s
 		case <-done:
 			for _, apiVip := range apiVips {
 				cleanHAProxyFirewallRules(apiVip, apiPort, lbPort)
+				cleanMCSFirewallRules(apiVip)
 			}
 			return nil
 		default:
@@ -135,6 +137,31 @@ func Monitor(kubeconfigPath, clusterName, clusterDomain, templatePath, cfgPath s
 					cleanHAProxyFirewallRules(apiVip, apiPort, lbPort)
 				}
 			}
+
+			// Machine-config-server firewall rule
+			curMCSHealth, err := utils.IsMCSHealthy()
+			if err != nil {
+				curMCSHealth = false
+			}
+			if curMCSHealth {
+				if oldMCSHealth != curMCSHealth {
+					log.Info("MCS is reachable through HAProxy")
+				}
+				for _, apiVip := range apiVips {
+					err := ensureMCSFirewallRules(apiVip)
+					if err != nil {
+						log.WithFields(logrus.Fields{"err": err}).Error("Failed to ensure HAProxy firewall rules to direct traffic to the MCS")
+					}
+				}
+			} else {
+				if oldMCSHealth != curMCSHealth {
+					log.Info("MCS is not reachable through HAProxy")
+				}
+				for _, apiVip := range apiVips {
+					cleanMCSFirewallRules(apiVip)
+				}
+			}
+			oldMCSHealth = curMCSHealth
 			time.Sleep(interval)
 		}
 	}

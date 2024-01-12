@@ -13,6 +13,8 @@ const (
 	table       = "nat"
 	isLoopback  = true
 	notLoopback = false
+	mcsPort = 22623
+	mcsLbPort = 9443
 )
 
 func getHAProxyRuleSpec(apiVip string, apiPort, lbPort uint16, loopback bool) (ruleSpec []string, err error) {
@@ -68,6 +70,41 @@ func cleanHAProxyFirewallRules(apiVip string, apiPort, lbPort uint16) error {
 	return nil
 }
 
+func cleanMCSFirewallRules(apiVip string) error {
+	ipt, err := iptables.NewWithProtocol(getProtocolbyIp(apiVip))
+	if err != nil {
+		return err
+	}
+
+	ruleSpec, err := getHAProxyRuleSpec(apiVip, mcsPort, mcsLbPort, notLoopback)
+	if err != nil {
+		return err
+	}
+
+	chain := "PREROUTING"
+	if exists, _ := ipt.Exists(table, chain, ruleSpec...); exists {
+		log.WithFields(logrus.Fields{
+			"spec": strings.Join(ruleSpec, " "),
+		}).Info("Removing existing nat PREROUTING rule")
+		err = ipt.Delete(table, chain, ruleSpec...)
+		if err != nil {
+			return err
+		}
+	}
+	ruleSpec, err = getHAProxyRuleSpec(apiVip, mcsPort, mcsLbPort, isLoopback)
+	if err != nil {
+		return err
+	}
+	chain = "OUTPUT"
+	if exists, _ := ipt.Exists(table, chain, ruleSpec...); exists {
+		log.WithFields(logrus.Fields{
+			"spec": strings.Join(ruleSpec, " "),
+		}).Info("Removing existing nat OUTPUT rule")
+		return ipt.Delete(table, chain, ruleSpec...)
+	}
+	return nil
+}
+
 func ensureHAProxyFirewallRules(apiVip string, apiPort, lbPort uint16) error {
 	ipt, err := iptables.NewWithProtocol(getProtocolbyIp(apiVip))
 	if err != nil {
@@ -103,6 +140,41 @@ func ensureHAProxyFirewallRules(apiVip string, apiPort, lbPort uint16) error {
 	return ipt.Insert(table, chain, 1, ruleSpec...)
 }
 
+func ensureMCSFirewallRules(apiVip string) error {
+	ipt, err := iptables.NewWithProtocol(getProtocolbyIp(apiVip))
+	if err != nil {
+		return err
+	}
+
+	ruleSpec, err := getHAProxyRuleSpec(apiVip, mcsPort, mcsLbPort, notLoopback)
+	if err != nil {
+		return err
+	}
+	chain := "PREROUTING"
+	if exists, _ := ipt.Exists(table, chain, ruleSpec...); exists {
+		return nil
+	}
+	log.WithFields(logrus.Fields{
+		"spec": strings.Join(ruleSpec, " "),
+	}).Info("Inserting nat PREROUTING rule")
+	err = ipt.Insert(table, chain, 1, ruleSpec...)
+	if err != nil {
+		return err
+	}
+	ruleSpec, err = getHAProxyRuleSpec(apiVip, mcsPort, mcsLbPort, isLoopback)
+	if err != nil {
+		return err
+	}
+	chain = "OUTPUT"
+	if exists, _ := ipt.Exists(table, chain, ruleSpec...); exists {
+		return nil
+	}
+	log.WithFields(logrus.Fields{
+		"spec": strings.Join(ruleSpec, " "),
+	}).Info("Inserting nat OUTPUT rule")
+	return ipt.Insert(table, chain, 1, ruleSpec...)
+}
+
 func checkHAProxyFirewallRules(apiVip string, apiPort, lbPort uint16) (bool, error) {
 	ipt, err := iptables.NewWithProtocol(getProtocolbyIp(apiVip))
 	if err != nil {
@@ -116,6 +188,26 @@ func checkHAProxyFirewallRules(apiVip string, apiPort, lbPort uint16) (bool, err
 	preroutingExists, _ := ipt.Exists(table, "PREROUTING", ruleSpec...)
 
 	ruleSpec, err = getHAProxyRuleSpec(apiVip, apiPort, lbPort, isLoopback)
+	if err != nil {
+		return false, err
+	}
+	outputExists, _ := ipt.Exists(table, "OUTPUT", ruleSpec...)
+	return (preroutingExists && outputExists), nil
+}
+
+func checkMCSFirewallRules(apiVip string) (bool, error) {
+	ipt, err := iptables.NewWithProtocol(getProtocolbyIp(apiVip))
+	if err != nil {
+		return false, err
+	}
+
+	ruleSpec, err := getHAProxyRuleSpec(apiVip, mcsPort, mcsLbPort, notLoopback)
+	if err != nil {
+		return false, err
+	}
+	preroutingExists, _ := ipt.Exists(table, "PREROUTING", ruleSpec...)
+
+	ruleSpec, err = getHAProxyRuleSpec(apiVip, mcsPort, mcsLbPort, isLoopback)
 	if err != nil {
 		return false, err
 	}

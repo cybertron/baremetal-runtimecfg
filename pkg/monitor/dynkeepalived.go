@@ -29,6 +29,7 @@ const (
 	modeUpdateIntervalInSec       time.Duration = 600
 	processingTimeInSec           uint16        = 30
 	iptablesFilePath                            = "/var/run/keepalived/iptables-rule-exists"
+	mcsIptablesFilePath                         = "/var/run/keepalived/iptables-mcs-rule-exists"
 	bootstrapApiFailuresThreshold int           = 4
 )
 
@@ -290,6 +291,26 @@ func handleLeasing(cfgPath string, apiVips, ingressVips []net.IP) error {
 	return nil
 }
 
+func UpdateIptablesFile(ruleExists, filePath) error {
+	_, err := os.Stat(filePath)
+	fileExists := !os.IsNotExist(err)
+	if ruleExists {
+		if !fileExists {
+			_, err := os.Create(filePath)
+			if err != nil {
+				log.WithFields(logrus.Fields{"path": filePath}).Error("Failed to create file")
+			}
+		}
+	} else {
+		if fileExists {
+			err := os.Remove(filePath)
+			if err != nil {
+				log.WithFields(logrus.Fields{"path": filePath}).Error("Failed to remove file")
+			}
+		}
+	}
+}
+
 func KeepalivedWatch(kubeconfigPath, clusterConfigPath, templatePath, cfgPath string, apiVips, ingressVips []net.IP, apiPort, lbPort uint16, interval time.Duration) error {
 	var appliedConfig, curConfig, prevConfig *config.Node
 	var configChangeCtr uint8 = 0
@@ -419,23 +440,13 @@ func KeepalivedWatch(kubeconfigPath, clusterConfigPath, templatePath, cfgPath st
 			if err != nil {
 				log.Error("Failed to check for haproxy firewall rule")
 			} else {
-				_, err := os.Stat(iptablesFilePath)
-				fileExists := !os.IsNotExist(err)
-				if ruleExists {
-					if !fileExists {
-						_, err := os.Create(iptablesFilePath)
-						if err != nil {
-							log.WithFields(logrus.Fields{"path": iptablesFilePath}).Error("Failed to create file")
-						}
-					}
-				} else {
-					if fileExists {
-						err := os.Remove(iptablesFilePath)
-						if err != nil {
-							log.WithFields(logrus.Fields{"path": iptablesFilePath}).Error("Failed to remove file")
-						}
-					}
-				}
+				updateIptablesFile(ruleExists, iptablesFilePath)
+			}
+			ruleExists, err = checkMCSFirewallRules(apiVips[0].String())
+			if err != nil {
+				log.Error("Failed to check for MCS firewall rule")
+			} else {
+				updateIptablesFile(ruleExists, mcsIptablesFilePath)
 			}
 			newConfig, err := config.GetConfig(kubeconfigPath, clusterConfigPath, "/etc/resolv.conf", apiVips, ingressVips, 0, 0, 0, config.ClusterLBConfig{})
 			if err != nil {
